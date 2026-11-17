@@ -3,6 +3,8 @@
 //! supports, and puts it back automatically whenever a device reset undoes it.
 
 mod audio;
+mod glyph;
+mod install;
 mod log;
 mod settings;
 mod tray;
@@ -65,9 +67,11 @@ const HELP: &str = "LatencyLock - keeps Windows audio at the lowest buffer your 
 
 Runs in the notification area. Right-click the headphones icon for status and settings.
 
-  latency-lock.exe            start the tray app
-  latency-lock.exe --probe    print every output device's buffer limits and exit
-  latency-lock.exe --help     show this help";
+  latency-lock.exe              install (the first time) and start the tray app
+  latency-lock.exe --probe      print every output device's buffer limits and exit
+  latency-lock.exe --portable   run from where it is, without installing
+  latency-lock.exe --uninstall  remove LatencyLock, its settings and its log
+  latency-lock.exe --help       show this help";
 
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 
@@ -445,27 +449,36 @@ fn main() {
     }
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|a| a == "--probe") {
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+    if has("--probe") {
         probe();
         return;
     }
+    if has("--uninstall") {
+        install::uninstall();
+        return;
+    }
+    // Besides --portable, these are passed between copies of LatencyLock, not typed by people.
+    const FLAGS: [&str; 4] = ["--portable", "--installed", "--first-run", "--updated"];
+    if args.iter().any(|a| !FLAGS.contains(&a.as_str())) {
+        message(HWND::default(), HELP, MB_ICONINFORMATION);
+        return;
+    }
     // Started by "Restart now" after an update was downloaded; the old process is exiting.
-    let updated = args == ["--updated"];
-    if !args.is_empty() && !updated {
-        unsafe {
-            MessageBoxW(
-                HWND::default(),
-                &HSTRING::from(HELP),
-                w!("LatencyLock"),
-                MB_OK | MB_ICONINFORMATION,
-            );
-        }
+    let updated = has("--updated");
+    if has("--portable") || cfg!(debug_assertions) {
+        install::set_portable();
+    }
+    // Anything but the installed copy (a download, or an older copy that ran in place) installs
+    // and hands over. --installed means the installer started us, which also rules out a loop.
+    if !install::portable() && !has("--installed") && !install::is_installed_copy() {
+        install::run_installer(updated);
         return;
     }
 
     // One instance per user session.
     unsafe {
-        let mutex = CreateMutexW(None, true, w!("Local\\LatencyLock.SingleInstance"));
+        let mutex = CreateMutexW(None, true, install::MUTEX);
         let exists = GetLastError() == ERROR_ALREADY_EXISTS;
         // After an update the old version is still shutting down: wait for it to let go.
         let took_over = updated
@@ -475,13 +488,10 @@ fn main() {
                 r == WAIT_OBJECT_0 || r == WAIT_ABANDONED
             });
         if mutex.is_err() || (exists && !took_over) {
-            MessageBoxW(
+            message(
                 HWND::default(),
-                w!(
-                    "LatencyLock is already running. Look for the headphones icon in the notification area."
-                ),
-                w!("LatencyLock"),
-                MB_OK | MB_ICONINFORMATION,
+                install::ALREADY_RUNNING,
+                MB_ICONINFORMATION,
             );
             return;
         }
@@ -496,10 +506,16 @@ fn main() {
     };
     log::info(format!("LatencyLock {VERSION} started (mode: {mode:?})"));
     update::cleanup();
+    if !install::portable() {
+        // Keeps the version in Apps & features current after updates.
+        if let Ok(exe) = std::env::current_exe() {
+            install::register(&exe);
+        }
+    }
 
     let hwnd = unsafe {
         let instance: HINSTANCE = GetModuleHandleW(PCWSTR::null()).unwrap_or_default().into();
-        let class = w!("LatencyLockWindow");
+        let class = install::WINDOW_CLASS;
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: instance,
@@ -544,6 +560,22 @@ fn main() {
         })
     });
     with_app(|a| a.tick());
+    if has("--first-run") {
+        let startup = if settings::autostart_enabled() {
+            " and starts with Windows"
+        } else {
+            ""
+        };
+        with_app(|a| {
+            a.tray.notify(
+                "LatencyLock is running",
+                &format!(
+                    "It lives here in the notification area{startup}. \
+                     You can delete the file you downloaded."
+                ),
+            )
+        });
+    }
 
     unsafe {
         SetTimer(hwnd, TIMER_ID, TICK_MS, None);

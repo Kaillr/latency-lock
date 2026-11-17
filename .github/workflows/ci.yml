@@ -21,3 +21,4 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+      - run: cargo build --release --locked # also compiles the icon and version resources

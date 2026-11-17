@@ -86,6 +86,7 @@ pub fn launch_new() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe)
         .arg("--updated")
+        .args(crate::install::mode_args())
         .spawn()
         .map(drop)
         .map_err(|e| e.to_string())
@@ -288,7 +289,7 @@ fn parse_version(v: &str) -> Option<[u64; 3]> {
     parts.next().is_none().then_some(version)
 }
 
-fn is_newer(candidate: &str, current: &str) -> bool {
+pub fn is_newer(candidate: &str, current: &str) -> bool {
     matches!(
         (parse_version(candidate), parse_version(current)),
         (Some(a), Some(b)) if a > b

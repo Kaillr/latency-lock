@@ -4,9 +4,11 @@ use windows::Win32::Foundation::{ERROR_SUCCESS, HMODULE};
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::Registry::{
     HKEY_CURRENT_USER, REG_DWORD, REG_SZ, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
-    RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+    RegDeleteKeyValueW, RegDeleteKeyW, RegDeleteTreeW, RegGetValueW, RegSetKeyValueW,
 };
-use windows::core::{PCWSTR, w};
+use windows::core::{HSTRING, PCWSTR, w};
+
+use crate::install;
 
 const SETTINGS_KEY: PCWSTR = w!("Software\\LatencyLock");
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -56,7 +58,7 @@ pub fn set_flag(name: PCWSTR, on: bool) {
     }
 }
 
-fn get_string(key: PCWSTR, name: PCWSTR) -> Option<String> {
+pub fn get_string(key: PCWSTR, name: PCWSTR) -> Option<String> {
     let mut buf = vec![0u16; 2048];
     let mut size = (buf.len() * 2) as u32;
     let r = unsafe {
@@ -75,6 +77,50 @@ fn get_string(key: PCWSTR, name: PCWSTR) -> Option<String> {
     }
     let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     Some(String::from_utf16_lossy(&buf[..len]))
+}
+
+pub fn set_string(key: PCWSTR, name: &str, value: &str) {
+    let data: Vec<u16> = value.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        let _ = RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            key,
+            &HSTRING::from(name),
+            REG_SZ.0,
+            Some(data.as_ptr() as _),
+            (data.len() * 2) as u32,
+        );
+    }
+}
+
+pub fn set_dword(key: PCWSTR, name: &str, value: u32) {
+    unsafe {
+        let _ = RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            key,
+            &HSTRING::from(name),
+            REG_DWORD.0,
+            Some(&value as *const u32 as _),
+            4,
+        );
+    }
+}
+
+/// Delete a key under HKEY_CURRENT_USER with everything in it.
+pub fn delete_key(key: PCWSTR) {
+    unsafe {
+        let _ = RegDeleteTreeW(HKEY_CURRENT_USER, key);
+        let _ = RegDeleteKeyW(HKEY_CURRENT_USER, key);
+    }
+}
+
+/// Remove the settings and the Start with Windows entry (uninstall).
+pub fn remove_all() {
+    unsafe {
+        let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE);
+        let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, APPROVED_KEY, RUN_VALUE);
+    }
+    delete_key(SETTINGS_KEY);
 }
 
 fn get_first_byte(key: PCWSTR, name: PCWSTR) -> Option<u8> {
@@ -112,25 +158,32 @@ pub fn autostart_enabled() -> bool {
     get_first_byte(APPROVED_KEY, RUN_VALUE).is_none_or(|b| b & 1 == 0)
 }
 
+/// The tray menu's toggle, for this exe.
 pub fn set_autostart(on: bool) {
-    unsafe {
-        if on {
-            let cmd: Vec<u16> = format!("\"{}\"", exe_path())
-                .encode_utf16()
-                .chain(Some(0))
-                .collect();
-            let _ = RegSetKeyValueW(
-                HKEY_CURRENT_USER,
-                RUN_KEY,
-                RUN_VALUE,
-                REG_SZ.0,
-                Some(cmd.as_ptr() as _),
-                (cmd.len() * 2) as u32,
-            );
-            // Clear a "disabled" mark left by Task Manager so the entry really runs.
-            let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, APPROVED_KEY, RUN_VALUE);
-        } else {
+    if on {
+        enable_autostart(&exe_path());
+    } else {
+        unsafe {
             let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN_KEY, RUN_VALUE);
         }
     }
+}
+
+/// Start `exe` with Windows, clearing a "disabled" mark left by Task Manager so it really runs.
+pub fn enable_autostart(exe: &str) {
+    move_autostart(exe);
+    unsafe {
+        let _ = RegDeleteKeyValueW(HKEY_CURRENT_USER, APPROVED_KEY, RUN_VALUE);
+    }
+}
+
+/// Point an existing Start with Windows entry at `exe`, keeping whether it's enabled.
+pub fn move_autostart(exe: &str) {
+    let args = install::mode_args().join(" ");
+    let cmd = format!("\"{exe}\" {args}");
+    set_string(RUN_KEY, "LatencyLock", cmd.trim_end());
+}
+
+pub fn has_autostart_entry() -> bool {
+    get_string(RUN_KEY, RUN_VALUE).is_some()
 }
