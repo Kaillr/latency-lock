@@ -31,7 +31,7 @@ The USB adapter's 7 ms floor was the same at every sample rate from 44.1 to 384 
 
 ## Using it
 
-Run `latency-lock.exe`. A headphones icon appears in the notification area. Its headband is a padlock shackle, with a keyhole between the earcups:
+Download `latency-lock.exe` from the [latest release](https://github.com/Kaillr/latency-lock/releases/latest) and run it. A headphones icon appears in the notification area. Its headband is a padlock shackle, with a keyhole between the earcups:
 
 | Icon | Meaning |
 |---|---|
@@ -46,8 +46,10 @@ Right-click (or left-click) the icon for:
 - **Default output only** / **All outputs**
 - **Pause**, which hands control back to Windows defaults
 - **Start with Windows**
+- **Install updates automatically** (on by default, see [Updates](#updates))
 - **Device details...** (min, default and current buffer of every output)
 - **Open log** (`%LOCALAPPDATA%\LatencyLock\latency-lock.log`)
+- **Check for updates...**
 
 From a terminal:
 
@@ -56,6 +58,12 @@ latency-lock.exe --probe     # print every output's buffer limits
 ```
 
 If you hear crackling, your system can't keep up with the smallest buffer. Use **Pause**, or close CPU-heavy background apps.
+
+## Updates
+
+LatencyLock checks [GitHub Releases](https://github.com/Kaillr/latency-lock/releases) a minute after it starts and every 12 hours after that. When a newer version is out, it downloads it, checks it against the SHA-256 published with the release, puts it in place of the running exe and restarts. The audio engine is at the Windows default for about a second while that happens. While paused, updates wait until you resume. Updates are noted in the log.
+
+Untick **Install updates automatically** to turn this off; **Check for updates...** still works and asks before installing. The updater uses what ships with Windows (WinHTTP for downloads, BCrypt for the hash), so it adds no dependencies. Keep the exe in a folder you can write to (not Program Files), or updates can't be installed.
 
 ## How it works
 

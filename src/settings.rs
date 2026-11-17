@@ -14,8 +14,14 @@ const APPROVED_KEY: PCWSTR =
     w!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run");
 const RUN_VALUE: PCWSTR = w!("LatencyLock");
 pub const ALL_OUTPUTS: PCWSTR = w!("AllOutputs");
+pub const AUTO_UPDATE: PCWSTR = w!("AutoUpdate");
 
 pub fn get_flag(name: PCWSTR) -> bool {
+    get_flag_or(name, false)
+}
+
+/// Like `get_flag`, but `default` when the flag has never been set.
+pub fn get_flag_or(name: PCWSTR, default: bool) -> bool {
     let mut data = 0u32;
     let mut size = 4u32;
     let r = unsafe {
@@ -29,7 +35,11 @@ pub fn get_flag(name: PCWSTR) -> bool {
             Some(&mut size),
         )
     };
-    r == ERROR_SUCCESS && data != 0
+    if r == ERROR_SUCCESS {
+        data != 0
+    } else {
+        default
+    }
 }
 
 pub fn set_flag(name: PCWSTR, on: bool) {
