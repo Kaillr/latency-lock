@@ -43,8 +43,10 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const TIMER_ID: usize = 1;
 const TICK_MS: u32 = 1000;
 const TIMER_UPDATE: usize = 2;
-/// First update check a minute after start (the network may not be up yet at login), then
-/// every 12 hours, or an hour after a check that failed.
+/// Update checks (download only; the new version runs at the next start): a minute after
+/// start, as the network may not be up yet at login, then every 12 hours, or an hour after a
+/// check that failed. The app usually runs for days, so checking only at start would leave an
+/// update found then waiting a further launch.
 const UPDATE_FIRST_MS: u32 = 60 * 1000;
 const UPDATE_EVERY_MS: u32 = 12 * 60 * 60 * 1000;
 const UPDATE_RETRY_MS: u32 = 60 * 60 * 1000;
@@ -209,7 +211,7 @@ impl App {
             add(
                 check(auto_update()),
                 CMD_AUTO_UPDATE,
-                "Install updates automatically",
+                "Update automatically",
             );
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
             add(MF_STRING, CMD_DETAILS, "Device details...");
@@ -250,7 +252,7 @@ impl App {
                 let on = !auto_update();
                 settings::set_flag(settings::AUTO_UPDATE, on);
                 log::info(format!(
-                    "Install updates automatically: {}",
+                    "Update automatically: {}",
                     if on { "on" } else { "off" }
                 ));
             }
@@ -275,10 +277,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         match msg {
             WM_TIMER if wp.0 == TIMER_UPDATE => {
                 SetTimer(hwnd, TIMER_UPDATE, UPDATE_EVERY_MS, None);
-                // Installing restarts the app, which would lift a pause; wait until resumed.
-                let paused = with_app(|a| a.paused).unwrap_or(true);
-                if auto_update() && !paused {
-                    update::start(hwnd, false, true);
+                if auto_update() {
+                    update::start(hwnd, false);
                 }
                 LRESULT(0)
             }
@@ -352,7 +352,7 @@ fn show_menu(hwnd: HWND) {
             }
         }
         CMD_CHECK_UPDATE => {
-            if !update::start(hwnd, true, false) {
+            if !update::start(hwnd, true) {
                 message(
                     hwnd,
                     "An update check is already running.",
@@ -384,42 +384,25 @@ fn message(hwnd: HWND, text: &str, icon: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT 
     unsafe { MessageBoxW(hwnd, &HSTRING::from(text), w!("LatencyLock"), icon) }
 }
 
-/// A finished update check (see update.rs). Automatic checks stay quiet unless they install
-/// something; checks started from the menu always answer.
+/// A finished update check (see update.rs). Background checks stay quiet; a check started
+/// from the menu always answers, and offers to restart into a downloaded update.
 fn on_update(hwnd: HWND, report: update::Report) {
     match report.outcome {
-        Outcome::Installed(v) => {
-            log::info(format!("Updated to {v}; restarting"));
-            match update::launch_new() {
-                Ok(()) => unsafe {
-                    let _ = DestroyWindow(hwnd);
-                },
-                Err(e) => {
-                    log::info(format!("Could not start the new version: {e}"));
-                    if report.manual {
-                        message(
-                            hwnd,
-                            &format!(
-                                "LatencyLock {v} is installed. Restart LatencyLock to use it."
-                            ),
-                            MB_ICONINFORMATION,
-                        );
+        Outcome::Ready(v) if report.manual => {
+            let ask = format!(
+                "LatencyLock {v} is downloaded and will run the next time LatencyLock starts \
+                 (this is {VERSION}).\n\nRestart now?"
+            );
+            if message(hwnd, &ask, MB_YESNO | MB_ICONINFORMATION) == IDYES {
+                match update::launch_new() {
+                    Ok(()) => unsafe {
+                        log::info(format!("Restarting into {v}"));
+                        let _ = DestroyWindow(hwnd);
+                    },
+                    Err(e) => {
+                        message(hwnd, &format!("Could not restart:\n{e}"), MB_ICONWARNING);
                     }
                 }
-            }
-        }
-        Outcome::Available(v) => {
-            let ask = format!(
-                "LatencyLock {v} is available (you have {VERSION}).\n\nInstall it and restart now?"
-            );
-            if message(hwnd, &ask, MB_YESNO | MB_ICONINFORMATION) == IDYES
-                && !update::start(hwnd, true, true)
-            {
-                message(
-                    hwnd,
-                    "An update check is already running.",
-                    MB_ICONINFORMATION,
-                );
             }
         }
         Outcome::UpToDate(latest) if report.manual => {
@@ -431,7 +414,7 @@ fn on_update(hwnd: HWND, report: update::Report) {
                 MB_ICONINFORMATION,
             );
         }
-        Outcome::UpToDate(_) => {}
+        Outcome::Ready(_) | Outcome::UpToDate(_) => {}
         Outcome::Failed(e) => {
             log::info(format!("Update check failed: {e}"));
             if report.manual {
@@ -466,7 +449,7 @@ fn main() {
         probe();
         return;
     }
-    // Started by the previous version right after it installed an update.
+    // Started by "Restart now" after an update was downloaded; the old process is exiting.
     let updated = args == ["--updated"];
     if !args.is_empty() && !updated {
         unsafe {

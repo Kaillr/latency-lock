@@ -46,7 +46,7 @@ Right-click (or left-click) the icon for:
 - **Default output only** / **All outputs**
 - **Pause**, which hands control back to Windows defaults
 - **Start with Windows**
-- **Install updates automatically** (on by default, see [Updates](#updates))
+- **Update automatically** (on by default, see [Updates](#updates))
 - **Device details...** (min, default and current buffer of every output)
 - **Open log** (`%LOCALAPPDATA%\LatencyLock\latency-lock.log`)
 - **Check for updates...**
@@ -61,9 +61,9 @@ If you hear crackling, your system can't keep up with the smallest buffer. Use *
 
 ## Updates
 
-LatencyLock checks [GitHub Releases](https://github.com/Kaillr/latency-lock/releases) a minute after it starts and every 12 hours after that. When a newer version is out, it downloads it, checks it against the SHA-256 published with the release, puts it in place of the running exe and restarts. The audio engine is at the Windows default for about a second while that happens. While paused, updates wait until you resume. Updates are noted in the log.
+LatencyLock checks [GitHub Releases](https://github.com/Kaillr/latency-lock/releases) a minute after it starts and every 12 hours after that. When a newer version is out, it downloads it in the background, checks it against the SHA-256 published with the release, and puts it in place of `latency-lock.exe` on disk. The copy that's running is left alone, so nothing restarts or pops up: the new version runs the next time LatencyLock starts, usually your next sign-in. Downloads are noted in the log.
 
-Untick **Install updates automatically** to turn this off; **Check for updates...** still works and asks before installing. The updater uses what ships with Windows (WinHTTP for downloads, BCrypt for the hash), so it adds no dependencies. Keep the exe in a folder you can write to (not Program Files), or updates can't be installed.
+**Check for updates...** checks right away and, if it downloads a newer version, offers to restart into it. Untick **Update automatically** to stop the background checks. The updater uses what ships with Windows (WinHTTP for downloads, BCrypt for the hash), so it adds no dependencies. Keep the exe in a folder you can write to (not Program Files), or updates can't be downloaded.
 
 ## How it works
 

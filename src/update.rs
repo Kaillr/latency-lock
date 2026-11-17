@@ -1,16 +1,17 @@
 //! Self-update from GitHub Releases, using only what ships with Windows (WinHTTP, BCrypt).
 //!
 //! A worker thread asks the GitHub API for the latest release. If it is newer, it downloads
-//! `latency-lock.exe` and the `.sha256` published next to it, checks the hash, and swaps the
-//! new exe in. Windows won't overwrite a running exe but will rename it, so the running one moves
-//! aside to `latency-lock.exe.old` (deleted on the next start). The UI thread then starts the new
-//! exe with `--updated` and exits; the new process waits for the old one to let go of the
-//! single-instance mutex.
+//! `latency-lock.exe` and the `.sha256` published next to it, checks the hash, and puts the new
+//! exe at the running exe's path. Windows won't overwrite a running exe but will rename it, so
+//! the running one moves aside to `latency-lock.exe.old` and carries on from there. Nothing
+//! restarts on its own: the new version runs the next time LatencyLock starts, and that start
+//! deletes the `.old`.
 
 use std::ffi::c_void;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
@@ -24,7 +25,7 @@ use windows::Win32::Security::Cryptography::{BCRYPT_SHA256_ALG_HANDLE, BCryptHas
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 use windows::core::{HSTRING, PCWSTR, w};
 
-use crate::VERSION;
+use crate::{VERSION, log};
 
 /// Posted to the main window when a check finishes; LPARAM owns a `Box<Report>` (see `take`).
 pub const WM_UPDATE: u32 = WM_APP + 2;
@@ -33,12 +34,10 @@ const ASSET: &str = "latency-lock.exe";
 const MAX_DOWNLOAD: usize = 16 * 1024 * 1024;
 
 pub enum Outcome {
-    /// Already on the newest release (its version).
+    /// Nothing newer than what is running (the latest release's version).
     UpToDate(String),
-    /// A newer release exists but was not downloaded.
-    Available(String),
-    /// The newer exe is in place of the running one; start it to finish.
-    Installed(String),
+    /// This newer version is on disk and runs the next time LatencyLock starts.
+    Ready(String),
     Failed(String),
 }
 
@@ -49,17 +48,18 @@ pub struct Report {
 }
 
 static BUSY: AtomicBool = AtomicBool::new(false);
+/// The version downloaded during this session, waiting for the next start.
+static READY: Mutex<Option<String>> = Mutex::new(None);
 
-/// Check for a newer release on a worker thread and post `WM_UPDATE` to `hwnd` when done.
-/// With `install` a newer release is downloaded and swapped in; otherwise it is only reported.
-/// Returns false if a check is already running.
-pub fn start(hwnd: HWND, manual: bool, install: bool) -> bool {
+/// Check for a newer release on a worker thread, download it if there is one, and post
+/// `WM_UPDATE` to `hwnd` when done. Returns false if a check is already running.
+pub fn start(hwnd: HWND, manual: bool) -> bool {
     if BUSY.swap(true, Ordering::AcqRel) {
         return false;
     }
     let target = hwnd.0 as usize; // HWND is not Send; the handle value is.
     std::thread::spawn(move || {
-        let outcome = check(install).unwrap_or_else(Outcome::Failed);
+        let outcome = check().unwrap_or_else(Outcome::Failed);
         let report = Box::into_raw(Box::new(Report { manual, outcome }));
         let hwnd = HWND(target as *mut c_void);
         if unsafe { PostMessageW(hwnd, WM_UPDATE, WPARAM(0), LPARAM(report as isize)) }.is_err() {
@@ -80,7 +80,8 @@ pub unsafe fn take(lp: LPARAM) -> Report {
     *unsafe { Box::from_raw(lp.0 as *mut Report) }
 }
 
-/// Start the exe now on disk (the new version), which takes over once this process exits.
+/// Start the exe now on disk (the downloaded version) with `--updated`, which takes over once
+/// this process exits.
 pub fn launch_new() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe)
@@ -98,7 +99,7 @@ pub fn cleanup() {
     }
 }
 
-fn check(install: bool) -> Result<Outcome, String> {
+fn check() -> Result<Outcome, String> {
     let repo = env!("CARGO_PKG_REPOSITORY")
         .strip_prefix("https://github.com/")
         .ok_or("the repository in Cargo.toml is not on GitHub")?;
@@ -106,11 +107,12 @@ fn check(install: bool) -> Result<Outcome, String> {
     let tag = json_string(&String::from_utf8_lossy(&release), "tag_name")
         .ok_or("the latest release has no tag")?;
     let latest = tag.trim_start_matches('v').to_owned();
-    if !is_newer(&latest, VERSION) {
-        return Ok(Outcome::UpToDate(latest));
-    }
-    if !install {
-        return Ok(Outcome::Available(latest));
+    let ready = READY.lock().unwrap().clone();
+    if !is_newer(&latest, ready.as_deref().unwrap_or(VERSION)) {
+        return Ok(match ready {
+            Some(version) => Outcome::Ready(version),
+            None => Outcome::UpToDate(latest),
+        });
     }
     let path = format!("/{repo}/releases/download/{tag}/{ASSET}");
     let exe = get("github.com", &path)?;
@@ -125,22 +127,31 @@ fn check(install: bool) -> Result<Outcome, String> {
             "{ASSET} from {tag} does not match its published SHA-256"
         ));
     }
-    swap_in(&exe)?;
-    Ok(Outcome::Installed(latest))
+    swap_in(&exe, ready.is_some())?;
+    log::info(format!(
+        "Downloaded LatencyLock {latest}; it runs the next time LatencyLock starts"
+    ));
+    *READY.lock().unwrap() = Some(latest.clone());
+    Ok(Outcome::Ready(latest))
 }
 
-/// Write `bytes` where the running exe is, moving the running exe aside.
-fn swap_in(bytes: &[u8]) -> Result<(), String> {
+/// Put `bytes` at the exe's path. The first time, the running exe is in the way and moves
+/// aside to `.old`; after that the path holds an earlier download, which is simply replaced.
+fn swap_in(bytes: &[u8], running_moved: bool) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let (new, old) = (sibling(&exe, "new"), sibling(&exe, "old"));
     fs::write(&new, bytes).map_err(|e| format!("cannot write {}: {e}", new.display()))?;
-    let _ = fs::remove_file(&old);
-    if let Err(e) = fs::rename(&exe, &old) {
-        let _ = fs::remove_file(&new);
-        return Err(format!("cannot move {} aside: {e}", exe.display()));
+    if !running_moved {
+        let _ = fs::remove_file(&old);
+        if let Err(e) = fs::rename(&exe, &old) {
+            let _ = fs::remove_file(&new);
+            return Err(format!("cannot move {} aside: {e}", exe.display()));
+        }
     }
     if let Err(e) = fs::rename(&new, &exe) {
-        let _ = fs::rename(&old, &exe);
+        if !running_moved {
+            let _ = fs::rename(&old, &exe);
+        }
         let _ = fs::remove_file(&new);
         return Err(format!("cannot replace {}: {e}", exe.display()));
     }
