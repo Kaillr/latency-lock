@@ -22,11 +22,11 @@ pub fn headphones(u: f32, v: f32, open: bool) -> bool {
         }
     }
     // Keyhole: a round head over a stem that flares toward the bottom.
-    let (kx, ky) = (u - 0.5, v - 0.62);
-    if kx * kx + ky * ky <= 0.095 * 0.095 {
+    let (kx, ky) = (u - 0.5, v - 0.535);
+    if kx * kx + ky * ky <= 0.125 * 0.125 {
         return true;
     }
-    if (0.62..=0.86).contains(&v) && kx.abs() <= 0.035 + (v - 0.62) * 0.18 {
+    if (0.535..=0.82).contains(&v) && kx.abs() <= 0.045 + (v - 0.535) * 0.21 {
         return true;
     }
     let (dx, dy) = (u - cx, v - cy);

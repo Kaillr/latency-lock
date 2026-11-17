@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 /// icon appears). Larger views scale the 64 px image up.
 const SIZES: [usize; 7] = [16, 20, 24, 32, 40, 48, 64];
 /// The tray icon's "holding the low buffer" green.
-const COLOR: [u8; 3] = [46, 160, 67];
+const COLOR: [u8; 3] = [22, 163, 74];
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");

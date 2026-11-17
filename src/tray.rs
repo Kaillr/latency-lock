@@ -45,7 +45,7 @@ impl Tray {
         Self {
             hwnd,
             icons: [
-                make_icon(size, (46, 160, 67), false),   // Locked: green
+                make_icon(size, (22, 163, 74), false),   // Locked: green
                 make_icon(size, (139, 148, 158), false), // Idle: grey
                 make_icon(size, (210, 153, 34), false),  // Warning: amber
                 make_icon(size, (139, 148, 158), true),  // Paused: grey, headband lifted
