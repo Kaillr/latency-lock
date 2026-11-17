@@ -3,6 +3,7 @@ name = "latency-lock"
 version = "1.0.1"
 edition = "2024"
 description = "Tray app that keeps the Windows audio engine at the smallest buffer your driver supports, and re-applies it automatically after device changes."
+license = "MIT"
 repository = "https://github.com/Kaillr/latency-lock"
 readme = "README.md"
 keywords = ["audio", "latency", "wasapi", "windows", "tray"]

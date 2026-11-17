@@ -92,3 +92,7 @@ Every push and pull request runs the checks (rustfmt, clippy, tests) on Windows.
 | `feat: ...` | minor (1.0.0 -> 1.1.0) |
 | `feat!: ...`, or a `BREAKING CHANGE:` footer | major (1.0.0 -> 2.0.0) |
 | `docs:`, `ci:`, `chore:`, `refactor:`, `test:`, ... | none |
+
+## License
+
+MIT, see [LICENSE](LICENSE).
