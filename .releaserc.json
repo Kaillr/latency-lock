@@ -1,0 +1,28 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    ["@semantic-release/commit-analyzer", { "preset": "conventionalcommits" }],
+    ["@semantic-release/release-notes-generator", { "preset": "conventionalcommits" }],
+    [
+      "@semantic-release/exec",
+      { "prepareCmd": "node .github/scripts/prepare-release.mjs ${nextRelease.version}" }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": ["Cargo.toml", "Cargo.lock"],
+        "message": "chore(release): ${nextRelease.version} [skip ci]"
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          { "path": "target/release/latency-lock.exe", "name": "latency-lock.exe" },
+          { "path": "target/release/latency-lock.exe.sha256", "name": "latency-lock.exe.sha256" }
+        ]
+      }
+    ]
+  ]
+}

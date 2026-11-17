@@ -81,3 +81,14 @@ Requires Rust with the MSVC toolchain.
 cargo build --release
 # -> target\release\latency-lock.exe
 ```
+
+## Releasing
+
+Every push and pull request runs the checks (rustfmt, clippy, tests) on Windows. Releases are made by hand: run the **Release** workflow from the Actions tab, or `gh workflow run release.yml`. It runs the same checks, then [semantic-release](https://semantic-release.gitbook.io/) reads the commits since the last release and, if any of them call for one, bumps the version in `Cargo.toml`, tags `vX.Y.Z`, and publishes `latency-lock.exe` with its `latency-lock.exe.sha256` on the release. Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+| Commit message | Release |
+|---|---|
+| `fix: ...`, `perf: ...` | patch (1.0.0 -> 1.0.1) |
+| `feat: ...` | minor (1.0.0 -> 1.1.0) |
+| `feat!: ...`, or a `BREAKING CHANGE:` footer | major (1.0.0 -> 2.0.0) |
+| `docs:`, `ci:`, `chore:`, `refactor:`, `test:`, ... | none |

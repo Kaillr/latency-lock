@@ -1,0 +1,50 @@
+name: Release
+
+# Releases are cut by hand: Actions > Release > Run workflow (or `gh workflow run release.yml`).
+# semantic-release reads the Conventional Commits since the last release to pick the version
+# (fix: patch, feat: minor, feat!/BREAKING CHANGE: major); if none call for a release, the run
+# ends without one. A release bumps Cargo.toml, tags vX.Y.Z, and publishes latency-lock.exe plus
+# its .sha256, which the in-app updater downloads.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: check
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: write # tag, release, version-bump commit
+      issues: write # "released in" comments
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - name: semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          npx --yes
+          -p semantic-release@26.0.1
+          -p @semantic-release/exec@7.1.0
+          -p @semantic-release/git@11.0.1
+          -p conventional-changelog-conventionalcommits@10.4.1
+          semantic-release
